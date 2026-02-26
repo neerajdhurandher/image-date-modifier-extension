@@ -1,0 +1,68 @@
+:root {
+  --idm-primary: #2563eb;
+  --idm-surface: #ffffff;
+  --idm-text: #0f172a;
+  --idm-shadow: 0 12px 30px rgba(2, 6, 23, 0.2);
+}
+
+#idm-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--idm-primary);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--idm-shadow);
+  z-index: 2147483647;
+}
+
+#idm-fab img {
+  width: 28px;
+  height: 28px;
+  display: block;
+  pointer-events: none;
+}
+
+#idm-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 88px;
+  width: 280px;
+  background: var(--idm-surface);
+  color: var(--idm-text);
+  border-radius: 16px;
+  box-shadow: var(--idm-shadow);
+  padding: 12px 12px 16px;
+  z-index: 2147483647;
+  display: none;
+}
+
+#idm-panel h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+#idm-panel button {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: none;
+  background: var(--idm-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#idm-panel p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #475569;
+}
