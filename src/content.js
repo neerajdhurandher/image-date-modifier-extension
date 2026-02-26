@@ -419,7 +419,255 @@
     });
   }
 
-  function runFieldRead() {
+  async function sleep(ms) {
+    if (ms == null) {
+      //  create a random number between 1000 to 3000
+      ms = Math.floor(Math.random() * 2000) + 1000;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function clickDateTimeEditIcon() {
+    const editPathD =
+      "M20.41 4.94l-1.35-1.35c-.78-.78-2.05-.78-2.83 0L3 16.82V21h4.18L20.41 7.77c.79-.78.79-2.05 0-2.83zm-14 14.12L5 19v-1.36l9.82-9.82 1.41 1.41-9.82 9.83z";
+
+    await sleep();
+    const iconPath = document.querySelector(`svg[viewBox="0 0 24 24"] path[d="${editPathD}"]`);
+    if (!iconPath) {
+      return false;
+    }
+
+    const svg = iconPath.closest("svg");
+    if (!svg) {
+      return false;
+    }
+
+    const clickable = svg.closest('button, [role="button"], [tabindex], div, span') || svg;
+    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    await sleep();
+    return true;
+  }
+
+  async function clickSaveButton() {
+    await sleep();
+    const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const saveSpans = Array.from(document.querySelectorAll('span[jsname="V67aGc"].mUIrbf-vQzf8d'));
+    const saveSpan = saveSpans.find((el) => isElementVisible(el) && el.textContent?.trim() === "Save") ||
+      saveSpans.find((el) => el.textContent?.trim() === "Save") ||
+      null;
+
+    if (!saveSpan) {
+      return false;
+    }
+
+    const clickable = saveSpan.closest('button, [role="button"], [tabindex]') || saveSpan;
+
+    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    await sleep();
+    return true;
+  }
+
+  async function update_file_date_time(capturedDateFromFileName, comparison) {
+    await sleep();
+    if (!capturedDateFromFileName || !comparison) {
+      console.log("[Image Date Modifier] update_file_date_time skipped: missing inputs");
+      return false;
+    }
+
+    if (comparison.sameCalendarDate === true) {
+      console.log("[Image Date Modifier] Date already matched. No update action needed.");
+      return false;
+    }
+    
+    const clicked = await clickDateTimeEditIcon();
+    console.log(
+        "[Image Date Modifier] Date mismatch detected. Edit date/time icon click:",
+        clicked ? "triggered" : "icon not found"
+    );
+
+    //  update year, month, date, hours, minutes, seconds one by one 
+    const yearInput = getYearInputElement();
+    const yearResult = await fillValueInInputElement(yearInput, capturedDateFromFileName.year, "year");
+    const monthInput = getMonthInputElement();
+    const monthResult = await fillValueInInputElement(monthInput, capturedDateFromFileName.month, "month");
+    const dayInput = getDayInputElement();
+    const dayResult = await fillValueInInputElement(dayInput, capturedDateFromFileName.date, "day");
+    const hourInput = getHourInputElement();
+    await fillValueInInputElement(hourInput, capturedDateFromFileName.hours, "hour");
+    const minutesInput = getMinutesInputElement();
+    await fillValueInInputElement(minutesInput, capturedDateFromFileName.minutes, "minutes");
+
+
+
+    if(yearResult && monthResult && dayResult) {
+      const saveClicked = await clickSaveButton();
+      console.log("[Image Date Modifier] Save button click attempted:", saveClicked ? "triggered" : "button not found");
+      return true;
+    }else{
+      console.warn("[Image Date Modifier] Could not fill all date fields. Save action skipped.");
+    }
+    return false;
+  }
+
+  async function fillValueInInputElement(element, value, name = "unknown") {
+    await sleep();
+    if (!element) {
+      console.error(`[Image Date Modifier] ${name} input element not found`);
+      return false;
+    }
+
+    // return false if value is null, empty or undefined
+    if (value == null || value === "") {
+      console.warn(`[Image Date Modifier] ${name} value is null or empty. Skipping input fill.`);
+      return false;
+    }
+    const nextValue = String(value);
+
+    if (element instanceof HTMLInputElement) {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      if (valueSetter) {
+        valueSetter.call(element, nextValue);
+      } else {
+        element.value = nextValue;
+      }
+    } else if (element instanceof HTMLTextAreaElement) {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      if (valueSetter) {
+        valueSetter.call(element, nextValue);
+      } else {
+        element.value = nextValue;
+      }
+    } else {
+      console.error(`[Image Date Modifier] ${name} input element not found`);
+      return false;
+    }
+
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    console.log(`[Image Date Modifier] Set ${name} input to:`, nextValue);
+    await sleep();
+    return true;
+  }
+
+  function getYearInputElement() {
+
+    const selectors = [
+      'input[aria-label="Year"][role="combobox"]',
+      'input[jsname="YPqjbf"][aria-label="Year"]',
+      'input.Fgl6fe-fmcmS-wGMbrd[aria-label="Year"]',
+      'input[aria-label="Year"]'
+    ];
+
+    const element = getInputElementUsingSelectors(selectors);
+    if (element) {
+      return element;
+    }
+    console.error("[Image Date Modifier] Year input element not found");
+    return null;
+  }
+
+  function getMonthInputElement() {
+    const selectors = [
+      'input[aria-label="Month"][role="combobox"]',
+      'input[jsname="YPqjbf"][aria-label="Month"]',
+      'input.Fgl6fe-fmcmS-wGMbrd[aria-label="Month"]',
+      'input[aria-label="Month"]'
+    ];
+
+    const element = getInputElementUsingSelectors(selectors);
+    if (element) {
+      return element;
+    }
+    console.error("[Image Date Modifier] Month input element not found");
+    return null;
+  }
+
+  function getDayInputElement() {
+    const selectors = [
+      'input[aria-label="Day"][role="combobox"]',
+      'input[jsname="YPqjbf"][aria-label="Day"]',
+      'input.Fgl6fe-fmcmS-wGMbrd[aria-label="Day"]',
+      'input[aria-label="Day"]'
+    ];
+
+    const element = getInputElementUsingSelectors(selectors);
+    if (element) {
+      return element;
+    }
+    console.error("[Image Date Modifier] Day input element not found");
+    return null;
+  }
+
+  function getHourInputElement() {
+    const selectors = [
+      'input[aria-label="Hour"][role="combobox"]',
+      'input[jsname="YPqjbf"][aria-label="Hour"]',
+      'input.Fgl6fe-fmcmS-wGMbrd[aria-label="Hour"]',
+      'input[aria-label="Hour"]'
+    ];
+
+    const element = getInputElementUsingSelectors(selectors);
+    if (element) {
+      return element;
+    }
+    console.error("[Image Date Modifier] Hour input element not found");
+    return null;
+  }
+
+  function getMinutesInputElement() {
+    const selectors = [
+      'input[aria-label="Minutes"][role="combobox"]',
+      'input[jsname="YPqjbf"][aria-label="Minutes"]',
+      'input.Fgl6fe-fmcmS-wGMbrd[aria-label="Minutes"]',
+      'input[aria-label="Minutes"]'
+    ];
+
+    const element = getInputElementUsingSelectors(selectors);
+    if (element) {
+      return element;
+    }
+    console.error("[Image Date Modifier] Minutes input element not found");
+    return null;
+  }
+
+  function getInputElementUsingSelectors(selectors) {
+        const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    for (const selector of selectors) {
+      const matches = Array.from(document.querySelectorAll(selector));
+      const visibleMatch = matches.find((el) => isElementVisible(el));
+      if (visibleMatch) {
+        return visibleMatch;
+      }
+
+      if (matches.length > 0) {
+        return matches[matches.length - 1];
+      }
+    }
+
+    return null;
+  }
+
+  async function runFieldRead() {
     const isElementVisible = (el) => {
       if (!el || !(el instanceof Element)) return false;
 
@@ -537,6 +785,8 @@
     console.log("[Image Date Modifier] Captured date from filename:", capturedDateFromFileName);
     const comparison = compareUploadedAndCaptured(updatedOrUploadedDate, capturedDateFromFileName);
     console.log("[Image Date Modifier] Uploaded vs captured comparison:", comparison);
+
+    await update_file_date_time(capturedDateFromFileName, comparison);
     
 
   }
