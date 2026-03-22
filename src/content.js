@@ -22,9 +22,21 @@
   const panel = document.createElement("div");
   panel.id = "idm-panel";
   panel.innerHTML = `
-    <h4>Image Date Tools</h4>
-    <button id="idm-run" type="button">Run action (label TBD)</button>
-    <p>Opens a script to read fields and click Save.</p>
+    <div id="idm-setup-view">
+      <h4>Image Date Tools</h4>
+      <p class="idm-label">Enter number of files to modify</p>
+      <input id="idm-file-count" type="number" min="1" max="9999" value="1" aria-label="Number of files to modify" />
+      <p id="idm-count-error" class="idm-error" aria-live="polite"></p>
+      <button id="idm-run" type="button">Start process</button>
+      <p class="idm-note">Opens a script to read fields and click Save.</p>
+    </div>
+    <div id="idm-progress-view" style="display:none;">
+      <h4>Updating the date .....</h4>
+      <p id="idm-progress-counter" class="idm-progress-counter" aria-live="polite">0 / 0</p>
+      <p class="idm-progress-label">files are modified</p>
+      <p id="idm-progress-status" class="idm-progress-status" aria-live="polite"></p>
+      <button id="idm-cancel" type="button" class="idm-cancel-btn">Cancel</button>
+    </div>
   `;
 
   fab.addEventListener("click", () => {
@@ -40,51 +52,93 @@
   document.body.appendChild(fab);
   document.body.appendChild(panel);
 
+  const MAX_FILE_COUNT = 100;
+  const MIN_FILE_COUNT = 1;
   const runButton = panel.querySelector("#idm-run");
   if (runButton) {
-    runButton.addEventListener("click", () => {
-      runFieldRead();
+    runButton.addEventListener("click", async () => {
+      const countInput = panel.querySelector("#idm-file-count");
+      const errorEl = panel.querySelector("#idm-count-error");
+      const raw = Number.parseInt(countInput?.value, 10);
+      console.log("[Image Date Modifier] Run button clicked. File count input:", raw);
+
+      if (!Number.isFinite(raw) || raw < MIN_FILE_COUNT || raw > MAX_FILE_COUNT) {
+        countInput.classList.add("idm-input-error");
+        errorEl.textContent = `Value must be between ${MIN_FILE_COUNT} and ${MAX_FILE_COUNT}.`;
+        return;
+      }
+
+      countInput.classList.remove("idm-input-error");
+      errorEl.textContent = "";
+
+      const count = Math.min(MAX_FILE_COUNT, raw);
+      const counterEl = panel.querySelector("#idm-progress-counter");
+      const statusEl = panel.querySelector("#idm-progress-status");
+
+      // Switch to progress view
+      panel.querySelector("#idm-setup-view").style.display = "none";
+      panel.querySelector("#idm-progress-view").style.display = "";
+      counterEl.textContent = `0 / ${count}`;
+      statusEl.textContent = "";
+
+      let cancelled = false;
+      const cancelBtn = panel.querySelector("#idm-cancel");
+      const onCancel = () => { cancelled = true; };
+      cancelBtn.addEventListener("click", onCancel, { once: true });
+
+      if (!isPhotoViewOpen()) {
+        errorEl.textContent = "Open any file to modify.";
+        console.log("[Image Date Modifier] No photo view detected to start.");
+        cancelled = true;
+      }
+
+      for (let i = 0; i < count; i++) {
+        if (cancelled) break;
+        if (!isPhotoViewOpen()) {
+          errorEl.textContent = "Open any file to modify.";
+          console.log("[Image Date Modifier] No photo view detected during process.");
+          break;
+        }
+        errorEl.textContent = "";
+        await runFieldRead();
+        counterEl.textContent = `${i + 1} / ${count}`;
+        window.__idmNextButtonClicked = false;
+      }
+
+      cancelBtn.removeEventListener("click", onCancel);
+
+      // Switch back to setup view
+      panel.querySelector("#idm-progress-view").style.display = "none";
+      panel.querySelector("#idm-setup-view").style.display = "";
+    });
+
+    panel.querySelector("#idm-file-count").addEventListener("input", () => {
+      const countInput = panel.querySelector("#idm-file-count");
+      const errorEl = panel.querySelector("#idm-count-error");
+      const raw = Number.parseInt(countInput.value, 10);
+      if (Number.isFinite(raw) && raw >= MIN_FILE_COUNT && raw <= MAX_FILE_COUNT) {
+        countInput.classList.remove("idm-input-error");
+        errorEl.textContent = "";
+      }
     });
   }
 
 
-  function attachUserSaveClickLogger() {
-    // Abort any previous listener to prevent accumulation across multiple photo runs
-    if (window.__idmSaveListenerController) {
-      window.__idmSaveListenerController.abort();
-    }
-    window.__idmSaveListenerController = new AbortController();
-
-    const normalizeText = (value) => (value || "").trim().toLowerCase();
-
-    const isSaveButton = (target) => {
-      if (!target || !(target instanceof Element)) return false;
-
-      const clickable = target.closest('button, [role="button"], [tabindex]');
-      if (!clickable) return false;
-
-      const labelSpan = clickable.querySelector('span[jsname="V67aGc"].mUIrbf-vQzf8d');
-      if (labelSpan && normalizeText(labelSpan.textContent) === "save") {
-        return true;
-      }
-
-      return normalizeText(clickable.textContent) === "save";
+  function isPhotoViewOpen() {
+    const editPathD =
+      "M20.41 4.94l-1.35-1.35c-.78-.78-2.05-.78-2.83 0L3 16.82V21h4.18L20.41 7.77c.79-.78.79-2.05 0-2.83zm-14 14.12L5 19v-1.36l9.82-9.82 1.41 1.41-9.82 9.83z";
+    const isVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
     };
-
-    document.addEventListener(
-      "click",
-      async (event) => {
-        if (!event.isTrusted) {
-          return;
-        }
-
-        if (isSaveButton(event.target)) {
-          console.log("[Image Date Modifier] Save button clicked action detected");
-          await clickNextButton();
-        }
-      },
-      { capture: true, signal: window.__idmSaveListenerController.signal }
-    );
+    const pathSelector = `svg[viewBox="0 0 24 24"] path[d="${editPathD}"]`;
+    return Array.from(document.querySelectorAll(pathSelector)).some((path) => {
+      const card = path.closest('div.ffq9nc.Kd04rd[role="button"]');
+      return card ? isVisible(card) : isVisible(path.closest("svg"));
+    });
   }
 
   function parseCapturedDateTimeFromFileName(fileName) {
@@ -461,8 +515,8 @@
 
   async function random_sleep(ms) {
     if (ms == null) {
-      //  create a random number between 1000 to 3000
-      ms = Math.floor(Math.random() * 2000) + 1000;
+      //  create a random number between 500 to 2000
+      ms = Math.floor(Math.random() * 1500) + 500;
     }
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -573,28 +627,22 @@
 
     const clickable = saveSpan.closest('button, [role="button"], [tabindex]') || saveSpan;
 
-    createCenteredHelloSpanInActionBar("Saving date/time changes...");
 
-    // Set up listener so a manual user save click also triggers next-photo navigation
-    attachUserSaveClickLogger();
+    // reset the flag to allow next-photo navigation after save
+    window.__idmNextButtonClicked = false;
 
     // Start glow to visually indicate the button — don't await full duration before clicking
     const glowPromise = applyGlowEffectToElement(clickable, "#ffe600");
     await random_sleep(300);
 
-    // Use native .click() — more reliably triggers framework event handlers than dispatchEvent.
-    // Synthetic MouseEvent via dispatchEvent has isTrusted:false which Google's Closure Library
-    // may reject. Native .click() and keyboard Enter cover both pointer and keyboard handlers.
     clickable.focus();
     clickable.click();
     clickable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
     clickable.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
     console.log("[Image Date Modifier] Save action triggered");
 
-    await random_sleep();
-
-    // Navigate to the next photo directly — attachUserSaveClickLogger only handles trusted (manual)
-    // clicks, so we must call this ourselves after the programmatic save
+    // Wait for save overlay to dismiss before navigating to next photo
+    await random_sleep(1000);
     await clickNextButton();
 
     await glowPromise;
@@ -686,6 +734,12 @@
         "[Image Date Modifier] Date mismatch detected. Edit date/time icon click:",
         clicked ? "triggered" : "icon not found"
     );
+
+    if (!clicked) {
+      return false;
+    }
+    
+    createCenteredHelloSpanInActionBar("Updating date & time ...");
 
     //  update year, month, date, hours, minutes, seconds one by one 
     const yearInput = getYearInputElement();
