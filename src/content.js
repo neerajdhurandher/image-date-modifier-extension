@@ -47,6 +47,46 @@
     });
   }
 
+
+  function attachUserSaveClickLogger() {
+    // Abort any previous listener to prevent accumulation across multiple photo runs
+    if (window.__idmSaveListenerController) {
+      window.__idmSaveListenerController.abort();
+    }
+    window.__idmSaveListenerController = new AbortController();
+
+    const normalizeText = (value) => (value || "").trim().toLowerCase();
+
+    const isSaveButton = (target) => {
+      if (!target || !(target instanceof Element)) return false;
+
+      const clickable = target.closest('button, [role="button"], [tabindex]');
+      if (!clickable) return false;
+
+      const labelSpan = clickable.querySelector('span[jsname="V67aGc"].mUIrbf-vQzf8d');
+      if (labelSpan && normalizeText(labelSpan.textContent) === "save") {
+        return true;
+      }
+
+      return normalizeText(clickable.textContent) === "save";
+    };
+
+    document.addEventListener(
+      "click",
+      async (event) => {
+        if (!event.isTrusted) {
+          return;
+        }
+
+        if (isSaveButton(event.target)) {
+          console.log("[Image Date Modifier] Save button clicked action detected");
+          await clickNextButton();
+        }
+      },
+      { capture: true, signal: window.__idmSaveListenerController.signal }
+    );
+  }
+
   function parseCapturedDateTimeFromFileName(fileName) {
     const buildResult = ({
       success,
@@ -419,7 +459,7 @@
     });
   }
 
-  async function sleep(ms) {
+  async function random_sleep(ms) {
     if (ms == null) {
       //  create a random number between 1000 to 3000
       ms = Math.floor(Math.random() * 2000) + 1000;
@@ -431,25 +471,87 @@
     const editPathD =
       "M20.41 4.94l-1.35-1.35c-.78-.78-2.05-.78-2.83 0L3 16.82V21h4.18L20.41 7.77c.79-.78.79-2.05 0-2.83zm-14 14.12L5 19v-1.36l9.82-9.82 1.41 1.41-9.82 9.83z";
 
-    await sleep();
-    const iconPath = document.querySelector(`svg[viewBox="0 0 24 24"] path[d="${editPathD}"]`);
-    if (!iconPath) {
+    await random_sleep();
+    const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const pathSelector = `svg[viewBox="0 0 24 24"] path[d="${editPathD}"]`;
+    const iconPaths = Array.from(document.querySelectorAll(pathSelector));
+    if (iconPaths.length === 0) {
       return false;
     }
 
-    const svg = iconPath.closest("svg");
-    if (!svg) {
-      return false;
+    let clickable = null;
+
+    for (const iconPath of iconPaths) {
+      const parentCard = iconPath.closest('div.ffq9nc.Kd04rd[role="button"]');
+      if (parentCard && isElementVisible(parentCard)) {
+        clickable = parentCard;
+        break;
+      }
     }
 
-    const clickable = svg.closest('button, [role="button"], [tabindex], div, span') || svg;
+    if (!clickable) {
+      const firstIconPath = iconPaths[0];
+      const svg = firstIconPath.closest("svg");
+      clickable =
+        (svg && svg.closest('div[role="button"], button, [tabindex]')) ||
+        svg ||
+        firstIconPath;
+    }
+
+    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
     clickable.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-    await sleep();
+    await random_sleep();
+    return true;
+  }
+
+  async function clickNextButton() {
+    if (window.__idmNextButtonClicked) {
+      return false;
+    }
+
+    window.__idmNextButtonClicked = true;
+
+    await random_sleep();
+
+    const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const nextButton =
+      document.querySelector('div.SxgK2b.Cwtbxf[role="button"][aria-label="View next photo"][jsname="OCpkoe"]') ||
+      document.querySelector('div[role="button"][aria-label="View next photo"]');
+
+    if (!nextButton || !isElementVisible(nextButton)) {
+      return false;
+    }
+
+    nextButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    nextButton.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+    nextButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    console.log("[Image Date Modifier] Navigated to next photo");
+
+    await random_sleep();
     return true;
   }
 
   async function clickSaveButton() {
-    await sleep();
+    await random_sleep();
     const isElementVisible = (el) => {
       if (!el || !(el instanceof Element)) return false;
       const style = window.getComputedStyle(el);
@@ -471,15 +573,102 @@
 
     const clickable = saveSpan.closest('button, [role="button"], [tabindex]') || saveSpan;
 
-    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-    await sleep();
+    createCenteredHelloSpanInActionBar("Saving date/time changes...");
+
+    // Set up listener so a manual user save click also triggers next-photo navigation
+    attachUserSaveClickLogger();
+
+    // Start glow to visually indicate the button — don't await full duration before clicking
+    const glowPromise = applyGlowEffectToElement(clickable, "#ffe600");
+    await random_sleep(300);
+
+    // Use native .click() — more reliably triggers framework event handlers than dispatchEvent.
+    // Synthetic MouseEvent via dispatchEvent has isTrusted:false which Google's Closure Library
+    // may reject. Native .click() and keyboard Enter cover both pointer and keyboard handlers.
+    clickable.focus();
+    clickable.click();
+    clickable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    clickable.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    console.log("[Image Date Modifier] Save action triggered");
+
+    await random_sleep();
+
+    // Navigate to the next photo directly — attachUserSaveClickLogger only handles trusted (manual)
+    // clicks, so we must call this ourselves after the programmatic save
+    await clickNextButton();
+
+    await glowPromise;
+    return true;
+  }
+
+  function createCenteredHelloSpanInActionBar(input_text = "hello") {
+    const actionBar = document.querySelector('div.uW2Fw-T0kwCb.IdSMxc');
+    if (!actionBar) {
+      return null;
+    }
+
+    const buttons = Array.from(actionBar.querySelectorAll(':scope > button'));
+    if (buttons.length < 2) {
+      return null;
+    }
+
+    const existingSpan = actionBar.querySelector('#idm-hello-span');
+    if (existingSpan) {
+      return existingSpan;
+    }
+
+    const helloSpan = document.createElement('span');
+    helloSpan.id = 'idm-hello-span';
+    helloSpan.textContent = input_text;
+    helloSpan.setAttribute('aria-hidden', 'true');
+
+    if (!actionBar.style.position) {
+      actionBar.style.position = 'relative';
+    }
+
+    helloSpan.style.position = 'absolute';
+    helloSpan.style.left = '50%';
+    helloSpan.style.top = '50%';
+    helloSpan.style.transform = 'translate(-50%, -50%)';
+    helloSpan.style.pointerEvents = 'none';
+    helloSpan.style.whiteSpace = 'nowrap';
+    helloSpan.style.marginTop = '2%';
+    helloSpan.style.fontSize = '14px';
+    helloSpan.style.fontWeight = 'bold';
+    helloSpan.style.color = '#ffe600';
+    helloSpan.style.textShadow = '0 0 5px #ffe600, 0 0 10px #ffe600';
+
+    actionBar.appendChild(helloSpan);
+    return helloSpan;
+  }
+
+  async function applyGlowEffectToElement(element, color = "#ffe600", durationMs = 1500) {
+    if (!element || !(element instanceof HTMLElement)) {
+      return false;
+    }
+
+    const previousBoxShadow = element.style.boxShadow;
+    const previousTransition = element.style.transition;
+    const previousOutline = element.style.outline;
+    const previousOutlineOffset = element.style.outlineOffset;
+
+    element.style.transition = "box-shadow 180ms ease-in-out, outline 180ms ease-in-out";
+    element.style.outline = `2px solid ${color}`;
+    element.style.outlineOffset = "2px";
+    element.style.boxShadow = `0 0 0 3px ${color}66, 0 0 12px 4px ${color}cc`;
+
+    await random_sleep(Math.max(250, durationMs));
+
+    element.style.boxShadow = previousBoxShadow;
+    element.style.transition = previousTransition;
+    element.style.outline = previousOutline;
+    element.style.outlineOffset = previousOutlineOffset;
+
     return true;
   }
 
   async function update_file_date_time(capturedDateFromFileName, comparison) {
-    await sleep();
+    await random_sleep();
     if (!capturedDateFromFileName || !comparison) {
       console.log("[Image Date Modifier] update_file_date_time skipped: missing inputs");
       return false;
@@ -490,6 +679,8 @@
       return false;
     }
     
+    window.__idmNextButtonClicked = false;
+
     const clicked = await clickDateTimeEditIcon();
     console.log(
         "[Image Date Modifier] Date mismatch detected. Edit date/time icon click:",
@@ -512,24 +703,24 @@
 
     if(yearResult && monthResult && dayResult) {
       const saveClicked = await clickSaveButton();
-      console.log("[Image Date Modifier] Save button click attempted:", saveClicked ? "triggered" : "button not found");
+      console.log("[Image Date Modifier] Save button highlighted:", saveClicked ? "triggered" : "button not found");
       return true;
     }else{
-      console.warn("[Image Date Modifier] Could not fill all date fields. Save action skipped.");
+      console.log("[Image Date Modifier] Could not fill all date fields. Save action skipped.");
     }
     return false;
   }
 
   async function fillValueInInputElement(element, value, name = "unknown") {
-    await sleep();
+    await random_sleep();
     if (!element) {
-      console.error(`[Image Date Modifier] ${name} input element not found`);
+      console.log(`[Image Date Modifier] ${name} input element not found`);
       return false;
     }
 
     // return false if value is null, empty or undefined
     if (value == null || value === "") {
-      console.warn(`[Image Date Modifier] ${name} value is null or empty. Skipping input fill.`);
+      console.log(`[Image Date Modifier] ${name} value is null or empty. Skipping input fill.`);
       return false;
     }
     const nextValue = String(value);
@@ -549,14 +740,14 @@
         element.value = nextValue;
       }
     } else {
-      console.error(`[Image Date Modifier] ${name} input element not found`);
+      console.log(`[Image Date Modifier] ${name} input element not found`);
       return false;
     }
 
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
     console.log(`[Image Date Modifier] Set ${name} input to:`, nextValue);
-    await sleep();
+    await random_sleep();
     return true;
   }
 
@@ -573,7 +764,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Year input element not found");
+    console.log("[Image Date Modifier] Year input element not found");
     return null;
   }
 
@@ -589,7 +780,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Month input element not found");
+    console.log("[Image Date Modifier] Month input element not found");
     return null;
   }
 
@@ -605,7 +796,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Day input element not found");
+    console.log("[Image Date Modifier] Day input element not found");
     return null;
   }
 
@@ -621,7 +812,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Hour input element not found");
+    console.log("[Image Date Modifier] Hour input element not found");
     return null;
   }
 
@@ -637,7 +828,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Minutes input element not found");
+    console.log("[Image Date Modifier] Minutes input element not found");
     return null;
   }
 
