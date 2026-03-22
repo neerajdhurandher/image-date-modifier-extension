@@ -49,9 +49,11 @@
 
 
   function attachUserSaveClickLogger() {
-    if (window.__idmUserSaveClickLoggerAttached) {
-      return;
+    // Abort any previous listener to prevent accumulation across multiple photo runs
+    if (window.__idmSaveListenerController) {
+      window.__idmSaveListenerController.abort();
     }
+    window.__idmSaveListenerController = new AbortController();
 
     const normalizeText = (value) => (value || "").trim().toLowerCase();
 
@@ -77,14 +79,12 @@
         }
 
         if (isSaveButton(event.target)) {
-          console.log("Save button clicked");
+          console.log("[Image Date Modifier] Save button clicked action detected");
           await clickNextButton();
         }
       },
-      true
+      { capture: true, signal: window.__idmSaveListenerController.signal }
     );
-
-    window.__idmUserSaveClickLoggerAttached = true;
   }
 
   function parseCapturedDateTimeFromFileName(fileName) {
@@ -544,6 +544,7 @@
     nextButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
     nextButton.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
     nextButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    console.log("[Image Date Modifier] Navigated to next photo");
 
     await random_sleep();
     return true;
@@ -571,18 +572,32 @@
     }
 
     const clickable = saveSpan.closest('button, [role="button"], [tabindex]') || saveSpan;
-    
-    createCenteredHelloSpanInActionBar("Click Save button to update date/time");
-    
-    await random_sleep();
-    
-    await applyGlowEffectToElement(clickable, "#ffe600");
-    console.log("[Image Date Modifier] Save button highlighted for user action");
-    
-    // note: user will click save button manually after verifying the data
 
-    // listing save button event
+    createCenteredHelloSpanInActionBar("Saving date/time changes...");
+
+    // Set up listener so a manual user save click also triggers next-photo navigation
     attachUserSaveClickLogger();
+
+    // Start glow to visually indicate the button — don't await full duration before clicking
+    const glowPromise = applyGlowEffectToElement(clickable, "#ffe600");
+    await random_sleep(300);
+
+    // Use native .click() — more reliably triggers framework event handlers than dispatchEvent.
+    // Synthetic MouseEvent via dispatchEvent has isTrusted:false which Google's Closure Library
+    // may reject. Native .click() and keyboard Enter cover both pointer and keyboard handlers.
+    clickable.focus();
+    clickable.click();
+    clickable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    clickable.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+    console.log("[Image Date Modifier] Save action triggered");
+
+    await random_sleep();
+
+    // Navigate to the next photo directly — attachUserSaveClickLogger only handles trusted (manual)
+    // clicks, so we must call this ourselves after the programmatic save
+    await clickNextButton();
+
+    await glowPromise;
     return true;
   }
 
@@ -664,7 +679,6 @@
       return false;
     }
     
-    window.__idmUserSaveClickLoggerAttached = false;
     window.__idmNextButtonClicked = false;
 
     const clicked = await clickDateTimeEditIcon();
@@ -692,7 +706,7 @@
       console.log("[Image Date Modifier] Save button highlighted:", saveClicked ? "triggered" : "button not found");
       return true;
     }else{
-      console.warn("[Image Date Modifier] Could not fill all date fields. Save action skipped.");
+      console.log("[Image Date Modifier] Could not fill all date fields. Save action skipped.");
     }
     return false;
   }
@@ -700,13 +714,13 @@
   async function fillValueInInputElement(element, value, name = "unknown") {
     await random_sleep();
     if (!element) {
-      console.error(`[Image Date Modifier] ${name} input element not found`);
+      console.log(`[Image Date Modifier] ${name} input element not found`);
       return false;
     }
 
     // return false if value is null, empty or undefined
     if (value == null || value === "") {
-      console.warn(`[Image Date Modifier] ${name} value is null or empty. Skipping input fill.`);
+      console.log(`[Image Date Modifier] ${name} value is null or empty. Skipping input fill.`);
       return false;
     }
     const nextValue = String(value);
@@ -726,7 +740,7 @@
         element.value = nextValue;
       }
     } else {
-      console.error(`[Image Date Modifier] ${name} input element not found`);
+      console.log(`[Image Date Modifier] ${name} input element not found`);
       return false;
     }
 
@@ -750,7 +764,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Year input element not found");
+    console.log("[Image Date Modifier] Year input element not found");
     return null;
   }
 
@@ -766,7 +780,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Month input element not found");
+    console.log("[Image Date Modifier] Month input element not found");
     return null;
   }
 
@@ -782,7 +796,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Day input element not found");
+    console.log("[Image Date Modifier] Day input element not found");
     return null;
   }
 
@@ -798,7 +812,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Hour input element not found");
+    console.log("[Image Date Modifier] Hour input element not found");
     return null;
   }
 
@@ -814,7 +828,7 @@
     if (element) {
       return element;
     }
-    console.error("[Image Date Modifier] Minutes input element not found");
+    console.log("[Image Date Modifier] Minutes input element not found");
     return null;
   }
 
