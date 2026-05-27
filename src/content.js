@@ -8,6 +8,45 @@
     return;
   }
 
+  // --- Auto-start from saved point: check for pending task ---
+  async function checkAndRunPendingTask() {
+    const data = await chrome.storage.local.get("idmPendingTask");
+    const pending = data.idmPendingTask;
+    if (!pending || !pending.fileCount) return false;
+
+    await chrome.storage.local.remove("idmPendingTask");
+    console.log("[Image Date Modifier] Pending task found. File count:", pending.fileCount);
+
+    // Wait for photo view to be ready (up to 30s)
+    const maxWaitMs = 30000;
+    const pollIntervalMs = 1000;
+    let waited = 0;
+    while (!isPhotoViewOpen() && waited < maxWaitMs) {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      waited += pollIntervalMs;
+    }
+
+    if (!isPhotoViewOpen()) {
+      console.log("[Image Date Modifier] Photo view did not open within timeout. Aborting pending task.");
+      return false;
+    }
+
+    // Skip the saved (correct) photo by clicking Next
+    await random_sleep(1000);
+    const navigated = await clickNextButton();
+    if (!navigated) {
+      console.log("[Image Date Modifier] Could not navigate to next photo from saved point. Using fallback.");
+      await clickRightSideFallback();
+    }
+    await random_sleep(1000);
+
+    return pending;
+  }
+
+  // Must define helpers before calling them in the pending-task flow.
+  // The actual pending-task execution is deferred until after all functions are defined.
+  let pendingTaskPromise = checkAndRunPendingTask();
+
   const fab = document.createElement("button");
   fab.id = "idm-fab";
   fab.type = "button";
@@ -24,9 +63,21 @@
   panel.innerHTML = `
     <div id="idm-setup-view">
       <h4>Image Date Tools</h4>
+      <p class="idm-label">Starting point link</p>
+      <div class="idm-link-row">
+        <input id="idm-start-link" type="url" placeholder="Paste Google Photos link" aria-label="Starting point Google Photos link" />
+        <button id="idm-save-link" type="button">Save</button>
+      </div>
+      <p id="idm-link-error" class="idm-error" aria-live="polite"></p>
+      <p id="idm-link-status" class="idm-link-status">No link saved</p>
+      <hr class="idm-divider" />
       <p class="idm-label">Enter number of files to modify</p>
-      <input id="idm-file-count" type="number" min="1" max="9999" value="1" aria-label="Number of files to modify" />
+      <input id="idm-file-count" type="number" min="1" max="500" value="1" aria-label="Number of files to modify" />
       <p id="idm-count-error" class="idm-error" aria-live="polite"></p>
+      <label class="idm-checkbox-row" id="idm-use-saved-label">
+        <input id="idm-use-saved" type="checkbox" disabled />
+        <span>Start from saved point</span>
+      </label>
       <button id="idm-run" type="button">Start process</button>
       <p class="idm-note">Opens a script to read fields and click Save.</p>
     </div>
@@ -52,7 +103,81 @@
   document.body.appendChild(fab);
   document.body.appendChild(panel);
 
-  const MAX_FILE_COUNT = 100;
+  // --- Saved-link storage logic ---
+  const linkInput = panel.querySelector("#idm-start-link");
+  const linkError = panel.querySelector("#idm-link-error");
+  const linkStatus = panel.querySelector("#idm-link-status");
+  const saveLinkBtn = panel.querySelector("#idm-save-link");
+  const useSavedCheckbox = panel.querySelector("#idm-use-saved");
+
+  function truncateUrl(url, maxLen = 35) {
+    if (!url || url.length <= maxLen) return url || "";
+    return "..." + url.slice(-(maxLen - 3));
+  }
+
+  function updateLinkStatusUI(savedUrl) {
+    if (savedUrl) {
+      linkStatus.innerHTML = "";
+      const urlSpan = document.createElement("span");
+      urlSpan.textContent = truncateUrl(savedUrl);
+      urlSpan.title = savedUrl;
+      linkStatus.appendChild(urlSpan);
+
+      const clearBtn = document.createElement("button");
+      clearBtn.id = "idm-clear-link";
+      clearBtn.type = "button";
+      clearBtn.textContent = "Clear";
+      clearBtn.style.padding = "2px 6px";
+      clearBtn.addEventListener("click", async () => {
+        await chrome.storage.local.remove("idmSavedLink");
+        updateLinkStatusUI(null);
+      });
+      linkStatus.appendChild(clearBtn);
+
+      useSavedCheckbox.disabled = false;
+    } else {
+      linkStatus.textContent = "No link saved";
+      useSavedCheckbox.disabled = true;
+      useSavedCheckbox.checked = false;
+    }
+  }
+
+  // Load saved link on init
+  chrome.storage.local.get("idmSavedLink", (data) => {
+    updateLinkStatusUI(data.idmSavedLink || null);
+  });
+
+  // Save link handler
+  saveLinkBtn.addEventListener("click", async () => {
+    const rawUrl = (linkInput.value || "").trim();
+    linkError.textContent = "";
+
+    if (!rawUrl) {
+      linkError.textContent = "Please enter a Google Photos link.";
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      linkError.textContent = "Invalid URL format.";
+      return;
+    }
+
+    if (parsed.hostname !== "photos.google.com") {
+      linkError.textContent = "URL must be from photos.google.com.";
+      return;
+    }
+
+    await chrome.storage.local.set({ idmSavedLink: rawUrl });
+    linkInput.value = "";
+    linkError.textContent = "";
+    updateLinkStatusUI(rawUrl);
+    console.log("[Image Date Modifier] Saved starting point link:", rawUrl);
+  });
+
+  const MAX_FILE_COUNT = 500;
   const MIN_FILE_COUNT = 1;
   const runButton = panel.querySelector("#idm-run");
   if (runButton) {
@@ -72,6 +197,21 @@
       errorEl.textContent = "";
 
       const count = Math.min(MAX_FILE_COUNT, raw);
+
+      // --- Start from saved point: navigate and defer ---
+      if (useSavedCheckbox.checked) {
+        const data = await chrome.storage.local.get("idmSavedLink");
+        const savedLink = data.idmSavedLink;
+        if (!savedLink) {
+          errorEl.textContent = "No saved link found. Save a link first.";
+          return;
+        }
+        await chrome.storage.local.set({ idmPendingTask: { fileCount: count } });
+        console.log("[Image Date Modifier] Navigating to saved link:", savedLink, "fileCount:", count);
+        window.location.href = savedLink;
+        return;
+      }
+
       const counterEl = panel.querySelector("#idm-progress-counter");
       const statusEl = panel.querySelector("#idm-progress-status");
 
@@ -103,7 +243,10 @@
         await runFieldRead();
         counterEl.textContent = `${i + 1} / ${count}`;
         window.__idmNextButtonClicked = false;
+        await cool_down_time(i);
       }
+
+      console.log("[Image Date Modifier] Process completed or cancelled. Total files processed:", cancelled ? "Cancelled at " + counterEl.textContent : count);
 
       cancelBtn.removeEventListener("click", onCancel);
 
@@ -121,6 +264,18 @@
         errorEl.textContent = "";
       }
     });
+  }
+
+
+  async function cool_down_time(iteration) {
+    // wait for some time to avoid triggering google photos anti-bot measures, 
+    // wait 25 sec after every 50 iterations 
+    // wait 10 sec after every 10 iterations
+
+    if (iteration % 50 === 0)
+        await random_sleep(25000);
+    else if (iteration % 10 === 0)
+        await random_sleep(10000);    
   }
 
 
@@ -515,10 +670,138 @@
 
   async function random_sleep(ms) {
     if (ms == null) {
-      //  create a random number between 500 to 2000
-      ms = Math.floor(Math.random() * 1500) + 500;
+      //  create a random number between 500 to 1500
+      ms = Math.floor(Math.random() * 1000) + 500;
     }
     await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function scrollInfoPanel() {
+    // Selectors for the right-side info/details panel in Google Photos
+    const panelSelectors = [
+      'div.GsKnGb',           // common info panel wrapper
+      'div[data-p="info"]',
+      'div[jsname="IbE0S"]',
+      'div.rHMBn',
+      'div.STCYne',
+    ];
+
+    let panel = null;
+    for (const selector of panelSelectors) {
+      const el = document.querySelector(selector);
+      if (el) {
+        panel = el;
+        break;
+      }
+    }
+
+    if (!panel) {
+      // Fallback: scroll the right half of the viewport via the element at that position
+      const x = Math.round(window.innerWidth * 0.80);
+      const y = Math.round(window.innerHeight * 0.50);
+      panel = document.elementFromPoint(x, y);
+    }
+
+    if (!panel) {
+      console.log("[Image Date Modifier] Info panel not found for scroll");
+      return;
+    }
+
+    const scrollTarget = Math.round(panel.scrollHeight * 0.5);
+    panel.scrollTo({ top: scrollTarget, behavior: "smooth" });
+    console.log("[Image Date Modifier] Info panel scrolled to 50%:", scrollTarget);
+    await random_sleep(500);
+  }
+
+  function isInfoPanelOpen() {
+    const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    // Check for the info panel div with class "IMbeAf" and jsname="r4nke"
+    const panelSelectors = [
+      'div.IMbeAf[jsname="r4nke"]',
+      'div.IMbeAf',
+      'div[jsname="r4nke"] h1.zeAJcf',
+    ];
+
+    for (const selector of panelSelectors) {
+      const el = document.querySelector(selector);
+      if (el && isElementVisible(el)) {
+        console.log("[Image Date Modifier] Info panel is open");
+        return true;
+      }
+    }
+
+    console.log("[Image Date Modifier] Info panel is not open");
+    return false;
+  }
+
+  async function clickInfoIconButton() {
+    const isElementVisible = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    // Look for the "Open info" button by aria-label
+    const infoButtonSelectors = [
+      'button[aria-label="Open info"]',
+      'button[jsname="LgbsSe"][aria-label="Open info"]',
+    ];
+
+    let infoButton = null;
+    for (const selector of infoButtonSelectors) {
+      const matches = Array.from(document.querySelectorAll(selector));
+      const visibleMatch = matches.find((el) => isElementVisible(el));
+      if (visibleMatch) {
+        infoButton = visibleMatch;
+        break;
+      }
+      if (matches.length > 0) {
+        infoButton = matches[0];
+        break;
+      }
+    }
+
+    if (!infoButton) {
+      console.log("[Image Date Modifier] Info icon button not found");
+      return false;
+    }
+
+    infoButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    infoButton.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+    infoButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    console.log("[Image Date Modifier] Clicked info icon button to open info panel");
+    await random_sleep(800);
+    return true;
+  }
+
+  async function ensureInfoPanelOpen() {
+    if (isInfoPanelOpen()) {
+      return true;
+    }
+
+    // Info panel is not open, click the info icon button
+    const clicked = await clickInfoIconButton();
+    if (!clicked) {
+      console.log("[Image Date Modifier] Could not click info icon button");
+      return false;
+    }
+
+    // Wait and verify the panel is now open
+    await random_sleep(500);
+    return isInfoPanelOpen();
   }
 
   async function clickDateTimeEditIcon() {
@@ -526,6 +809,14 @@
       "M20.41 4.94l-1.35-1.35c-.78-.78-2.05-.78-2.83 0L3 16.82V21h4.18L20.41 7.77c.79-.78.79-2.05 0-2.83zm-14 14.12L5 19v-1.36l9.82-9.82 1.41 1.41-9.82 9.83z";
 
     await random_sleep();
+
+    // Ensure info panel is open before trying to click the edit icon
+    // const panelOpen = await ensureInfoPanelOpen();
+    // if (!panelOpen) {
+    //   console.log("[Image Date Modifier] Info panel could not be opened, cannot click edit icon");
+    //   return false;
+    // }
+
     const isElementVisible = (el) => {
       if (!el || !(el instanceof Element)) return false;
       const style = window.getComputedStyle(el);
@@ -577,31 +868,55 @@
 
     await random_sleep();
 
-    const isElementVisible = (el) => {
-      if (!el || !(el instanceof Element)) return false;
-      const style = window.getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-        return false;
-      }
-      const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    };
-
     const nextButton =
       document.querySelector('div.SxgK2b.Cwtbxf[role="button"][aria-label="View next photo"][jsname="OCpkoe"]') ||
+      document.querySelector('div[jsname="OCpkoe"][role="button"]') ||
       document.querySelector('div[role="button"][aria-label="View next photo"]');
 
-    if (!nextButton || !isElementVisible(nextButton)) {
+    if (!nextButton) {
       return false;
     }
+
+    // Force the button visible so the click registers even if Google Photos hid it
+    const prevDisplay = nextButton.style.display;
+    const prevVisibility = nextButton.style.visibility;
+    const prevOpacity = nextButton.style.opacity;
+    const prevPointerEvents = nextButton.style.pointerEvents;
+
+    nextButton.style.display = "block";
+    nextButton.style.visibility = "visible";
+    nextButton.style.opacity = "1";
+    nextButton.style.pointerEvents = "auto";
 
     nextButton.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
     nextButton.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
     nextButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
     console.log("[Image Date Modifier] Navigated to next photo");
 
+    // Restore original styles
+    nextButton.style.display = prevDisplay;
+    nextButton.style.visibility = prevVisibility;
+    nextButton.style.opacity = prevOpacity;
+    nextButton.style.pointerEvents = prevPointerEvents;
+
     await random_sleep();
     return true;
+  }
+
+  async function clickRightSideFallback() {
+    // Fallback: click at 80% of screen width (center + 30%), middle of screen height
+    const x = Math.round(window.innerWidth * 0.80);
+    const y = Math.round(window.innerHeight * 0.50);
+
+    const target = document.elementFromPoint(x, y) || document.body;
+    const eventInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+
+    target.dispatchEvent(new MouseEvent("mousedown", eventInit));
+    target.dispatchEvent(new MouseEvent("mouseup", eventInit));
+    target.dispatchEvent(new MouseEvent("click", eventInit));
+    console.log(`[Image Date Modifier] Right-side fallback click at (${x}, ${y})`);
+
+    await random_sleep();
   }
 
   async function clickSaveButton() {
@@ -643,7 +958,11 @@
 
     // Wait for save overlay to dismiss before navigating to next photo
     await random_sleep(1000);
-    await clickNextButton();
+    const navigated = await clickNextButton();
+    if (!navigated) {
+      console.log("[Image Date Modifier] Next button not found, using right-side fallback click");
+      await clickRightSideFallback();
+    }
 
     await glowPromise;
     return true;
@@ -727,7 +1046,7 @@
       return false;
     }
     
-    window.__idmNextButtonClicked = false;
+    await scrollInfoPanel();
 
     const clicked = await clickDateTimeEditIcon();
     console.log(
@@ -749,11 +1068,9 @@
     const dayInput = getDayInputElement();
     const dayResult = await fillValueInInputElement(dayInput, capturedDateFromFileName.date, "day");
     const hourInput = getHourInputElement();
-    await fillValueInInputElement(hourInput, capturedDateFromFileName.hours, "hour");
+    const hourResult = await fillValueInInputElement(hourInput, capturedDateFromFileName.hours, "hour");
     const minutesInput = getMinutesInputElement();
-    await fillValueInInputElement(minutesInput, capturedDateFromFileName.minutes, "minutes");
-
-
+    const minutesResult = await fillValueInInputElement(minutesInput, capturedDateFromFileName.minutes, "minutes");
 
     if(yearResult && monthResult && dayResult) {
       const saveClicked = await clickSaveButton();
@@ -800,7 +1117,6 @@
 
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
-    console.log(`[Image Date Modifier] Set ${name} input to:`, nextValue);
     await random_sleep();
     return true;
   }
@@ -1025,14 +1341,67 @@
 
     const capturedDateFromFileName = parseCapturedDateTimeFromFileName(fileName);
 
-    console.log("[Image Date Modifier] File name:", fileName || "Not found");
-    console.log("[Image Date Modifier] Uploaded/Updated date:", updatedOrUploadedDate || "Not found");
-    console.log("[Image Date Modifier] Captured date from filename:", capturedDateFromFileName);
     const comparison = compareUploadedAndCaptured(updatedOrUploadedDate, capturedDateFromFileName);
-    console.log("[Image Date Modifier] Uploaded vs captured comparison:", comparison);
-
-    await update_file_date_time(capturedDateFromFileName, comparison);
     
+    console.log("[Image Date Modifier] Needs to modify: ", comparison.canCompare && !comparison.sameCalendarDate);
 
+    window.__idmNextButtonClicked = false;
+    
+    const result = await update_file_date_time(capturedDateFromFileName, comparison);
+    
+    console.log("[Image Date Modifier] Modification result: ", result);
+    
+    if(!result){
+      const navigated = await clickNextButton();
+      if (!navigated) {
+        console.log("[Image Date Modifier] Next button not found, using right-side fallback click");
+        await clickRightSideFallback();
+      }
+    }
+
+    return result;
   }
+
+  // --- Execute pending task (from saved-point navigation) ---
+  pendingTaskPromise.then(async (pending) => {
+    if (!pending) return;
+
+    const count = pending.fileCount;
+    console.log("[Image Date Modifier] Auto-starting modification for", count, "files from saved point.");
+
+    // Show the panel with progress view
+    panel.style.display = "block";
+    const counterEl = panel.querySelector("#idm-progress-counter");
+    const statusEl = panel.querySelector("#idm-progress-status");
+    const errorEl = panel.querySelector("#idm-count-error");
+    panel.querySelector("#idm-setup-view").style.display = "none";
+    panel.querySelector("#idm-progress-view").style.display = "";
+    counterEl.textContent = `0 / ${count}`;
+    statusEl.textContent = "Started from saved point";
+
+    let cancelled = false;
+    const cancelBtn = panel.querySelector("#idm-cancel");
+    const onCancel = () => { cancelled = true; };
+    cancelBtn.addEventListener("click", onCancel, { once: true });
+
+    for (let i = 0; i < count; i++) {
+      if (cancelled) break;
+      if (!isPhotoViewOpen()) {
+        if (errorEl) errorEl.textContent = "Open any file to modify.";
+        console.log("[Image Date Modifier] No photo view detected during auto-start process.");
+        break;
+      }
+      if (errorEl) errorEl.textContent = "";
+      await runFieldRead();
+      counterEl.textContent = `${i + 1} / ${count}`;
+      console.log(`[Image Date Modifier] Completed auto-modification for file ${i + 1} of ${count}`);
+      window.__idmNextButtonClicked = false;
+      await cool_down_time(i);
+    }
+
+    console.log("[Image Date Modifier] Auto-start process completed or cancelled.");
+    cancelBtn.removeEventListener("click", onCancel);
+    panel.querySelector("#idm-progress-view").style.display = "none";
+    panel.querySelector("#idm-setup-view").style.display = "";
+  });
 })();

@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Image Date Modifier",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Helps update image/video dates in Google Photos by injecting guided actions.",
   "icons": {
     "16": "src/images/icon16.png",
     "48": "src/images/icon48.png",
     "128": "src/images/icon128.png"
   },
-  "permissions": [],
+  "permissions": ["storage"],
   "host_permissions": [
     "*://www.google.com/*",
     "*://google.com/*",
